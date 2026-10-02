@@ -11,7 +11,9 @@ dynamic = ["version"]  # read from alfred.__version__ (see [tool.setuptools.dyna
 description = "Alfred, a personal desktop AI assistant (learning project)."
 readme = "README.md"
 requires-python = ">=3.11"  # 3.11+ ships tomllib in the standard library
-dependencies = []           # Alfred needs nothing outside the standard library yet
+dependencies = [
+    "httpx>=0.28",          # HTTP client, used only by alfred.obsidian
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

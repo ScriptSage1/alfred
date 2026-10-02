@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+
+# Obsidian Local REST API certificate (machine-specific)
+obsidian-local-rest-api.crt
