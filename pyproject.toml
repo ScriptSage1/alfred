@@ -1,0 +1,28 @@
+# pyproject.toml is the single place that describes this Python project:
+# how to build it, what it depends on, and how tools (like pytest) behave.
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alfred"
+dynamic = ["version"]  # read from alfred.__version__ (see [tool.setuptools.dynamic])
+description = "Alfred, a personal desktop AI assistant (learning project)."
+readme = "README.md"
+requires-python = ">=3.11"  # 3.11+ ships tomllib in the standard library
+dependencies = []           # Alfred needs nothing outside the standard library yet
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+# Installing the project creates an `alfred` command that calls main().
+[project.scripts]
+alfred = "alfred.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "alfred.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"  # print a short summary of skipped/failed tests at the end

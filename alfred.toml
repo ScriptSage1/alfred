@@ -1,0 +1,12 @@
+# Alfred configuration file.
+# Alfred reads this from the current directory when it starts.
+# Use `alfred --config path/to/other.toml` to load a different file.
+
+[alfred]
+name = "Alfred"
+
+# One of: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level = "INFO"
+
+# Modules to load at startup. Each name matches a file in src/alfred/modules/.
+modules = ["hello"]
