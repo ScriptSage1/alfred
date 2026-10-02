@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/alfred-logo.png" alt="Alfred logo" width="200">
+</p>
+
 # Alfred
 
 A personal desktop AI assistant. This is a learning project; right now it is
