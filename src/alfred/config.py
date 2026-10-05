@@ -5,9 +5,10 @@ Settings come from four places, from lowest to highest priority:
 1. Defaults defined on the dataclasses below.
 2. A TOML file (alfred.toml in the current directory by default).
 3. Environment variables (OBSIDIAN_URL, OBSIDIAN_API_KEY, OBSIDIAN_CA_CERT).
+   (The Copilot runtime reads COPILOT_GITHUB_TOKEN itself.)
 4. Command-line overrides, applied in __main__.py.
 
-Secrets (the Obsidian API key) are only ever read from environment variables,
+Secrets (API keys, tokens) are only ever read from environment variables,
 never from the TOML file, because config files tend to end up in git.
 """
 
@@ -40,6 +41,20 @@ class ObsidianSettings:
 
 
 @dataclass(frozen=True)
+class CopilotSettings:
+    """How Alfred uses GitHub Copilot. The token comes from COPILOT_GITHUB_TOKEN,
+    which the Copilot runtime reads itself; Alfred never handles it."""
+
+    model: str | None = None  # None: Copilot's default model
+    timeout: float = 120.0    # seconds to wait for an answer
+
+
+@dataclass(frozen=True)
+class UISettings:
+    hotkey: str = "ctrl+alt+space"
+
+
+@dataclass(frozen=True)
 class AlfredConfig:
     """All of Alfred's settings. frozen=True makes it read-only once created."""
 
@@ -47,6 +62,8 @@ class AlfredConfig:
     log_level: str = "INFO"
     modules: tuple[str, ...] = ("hello",)
     obsidian: ObsidianSettings = field(default_factory=ObsidianSettings)
+    copilot: CopilotSettings = field(default_factory=CopilotSettings)
+    ui: UISettings = field(default_factory=UISettings)
 
 
 def load_config(path: Path | None = None, env: Mapping[str, str] | None = None) -> AlfredConfig:
@@ -68,6 +85,8 @@ def load_config(path: Path | None = None, env: Mapping[str, str] | None = None) 
     return AlfredConfig(
         **_alfred_section(data.get("alfred", {})),
         obsidian=_obsidian_section(data.get("obsidian", {}), env),
+        copilot=_copilot_section(data.get("copilot", {})),
+        ui=_ui_section(data.get("ui", {})),
     )
 
 
@@ -130,3 +149,29 @@ def _obsidian_section(section: dict, env: Mapping[str, str]) -> ObsidianSettings
         ca_cert=Path(ca_cert) if ca_cert else None,
         timeout=float(timeout),
     )
+
+
+def _copilot_section(section: dict) -> CopilotSettings:
+    defaults = CopilotSettings()
+    if {"token", "github_token"} & set(section):
+        raise ConfigError(
+            "do not put a GitHub token in the config file; "
+            "set the COPILOT_GITHUB_TOKEN environment variable instead"
+        )
+
+    model = section.get("model") or None
+    if model is not None and not isinstance(model, str):
+        raise ConfigError("copilot 'model' must be text")
+
+    timeout = section.get("timeout", defaults.timeout)
+    if not isinstance(timeout, (int, float)) or timeout <= 0:
+        raise ConfigError("copilot 'timeout' must be a positive number of seconds")
+
+    return CopilotSettings(model=model, timeout=float(timeout))
+
+
+def _ui_section(section: dict) -> UISettings:
+    hotkey = section.get("hotkey", UISettings().hotkey)
+    if not isinstance(hotkey, str) or not hotkey.strip():
+        raise ConfigError("ui 'hotkey' must be text like \"ctrl+alt+space\"")
+    return UISettings(hotkey=hotkey.strip().lower())

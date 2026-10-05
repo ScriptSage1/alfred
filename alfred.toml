@@ -26,3 +26,19 @@ ca_cert = "obsidian-local-rest-api.crt"
 timeout = 10
 
 # The API key is NOT set here. Put it in the OBSIDIAN_API_KEY environment variable.
+
+[copilot]
+# Which Copilot model to use. Leave empty for Copilot's default;
+# `python scripts/check_copilot.py` lists the models available to you.
+model = ""
+
+# Seconds to wait for Copilot to answer one request.
+timeout = 120
+
+# The GitHub token is NOT set here. Put it in the COPILOT_GITHUB_TOKEN environment variable.
+
+[ui]
+# Global hotkey that opens Alfred's command palette, from any application.
+# Modifiers: ctrl, alt, shift, win. Keys: a-z, 0-9, f1-f12, space, enter, tab.
+# Ctrl+Alt+Space (Alfred's default) is taken by another app on this PC.
+hotkey = "alt+m"

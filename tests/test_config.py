@@ -103,3 +103,37 @@ def test_api_key_is_hidden_from_repr():
     settings = ObsidianSettings(api_key="super-secret")
     assert "super-secret" not in repr(settings)
     assert "super-secret" not in repr(AlfredConfig(obsidian=settings))
+
+
+# --- [copilot] and [ui] sections ---------------------------------------------------
+
+
+def test_copilot_and_ui_defaults(tmp_path):
+    config = load_config(write(tmp_path / "alfred.toml", ""), env=NO_ENV)
+    assert config.copilot.model is None
+    assert config.copilot.timeout == 120.0
+    assert config.ui.hotkey == "ctrl+alt+space"
+
+
+def test_copilot_and_ui_from_file(tmp_path):
+    path = write(
+        tmp_path / "alfred.toml",
+        '[copilot]\nmodel = "gpt-5"\ntimeout = 30\n[ui]\nhotkey = "Alt+M"\n',
+    )
+    config = load_config(path, env=NO_ENV)
+    assert config.copilot.model == "gpt-5"
+    assert config.copilot.timeout == 30.0
+    assert config.ui.hotkey == "alt+m"
+
+
+@pytest.mark.parametrize("key", ["token", "github_token"])
+def test_github_token_in_config_file_is_rejected(tmp_path, key):
+    path = write(tmp_path / "alfred.toml", f'[copilot]\n{key} = "github_pat_oops"\n')
+    with pytest.raises(ConfigError, match="COPILOT_GITHUB_TOKEN"):
+        load_config(path, env=NO_ENV)
+
+
+def test_bad_copilot_timeout(tmp_path):
+    path = write(tmp_path / "alfred.toml", "[copilot]\ntimeout = 0\n")
+    with pytest.raises(ConfigError, match="timeout"):
+        load_config(path, env=NO_ENV)

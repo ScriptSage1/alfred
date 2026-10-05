@@ -150,6 +150,44 @@ def test_non_ascii_content_is_sent_as_utf8():
     assert fake.requests[0].content == "café ☕".encode("utf-8")
 
 
+def test_delete_note_moves_to_trash():
+    fake = FakeObsidian(httpx.Response(204))
+    make_client(fake).delete_note("To-do/old.md")
+
+    request = fake.requests[0]
+    assert request.method == "DELETE"
+    assert request.url.path == "/vault/To-do/old.md"
+    assert "permanent" not in request.url.params  # default: Obsidian's trash
+
+
+def test_delete_missing_note():
+    fake = FakeObsidian(httpx.Response(404))
+    with pytest.raises(NoteNotFoundError):
+        make_client(fake).delete_note("nope.md")
+
+
+# --- list_notes ----------------------------------------------------------------
+
+
+def test_list_notes_returns_vault_paths_of_files_only():
+    fake = FakeObsidian(httpx.Response(200, json={"files": ["a.md", "archive/", "b c.md"]}))
+    paths = make_client(fake).list_notes("To-do")
+
+    assert fake.requests[0].url.path == "/vault/To-do/"
+    assert paths == ["To-do/a.md", "To-do/b c.md"]
+
+
+def test_list_notes_of_missing_folder_is_empty():
+    fake = FakeObsidian(httpx.Response(404, json={"errorCode": 40400, "message": "Not Found"}))
+    assert make_client(fake).list_notes("Nope") == []
+
+
+def test_list_notes_of_vault_root():
+    fake = FakeObsidian(httpx.Response(200, json={"files": ["Inbox.md", "To-do/"]}))
+    assert make_client(fake).list_notes() == ["Inbox.md"]
+    assert fake.requests[0].url.path == "/vault/"
+
+
 # --- search_notes ------------------------------------------------------------
 
 

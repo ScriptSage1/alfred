@@ -13,6 +13,10 @@ readme = "README.md"
 requires-python = ">=3.11"  # 3.11+ ships tomllib in the standard library
 dependencies = [
     "httpx>=0.28",          # HTTP client, used only by alfred.obsidian
+    "pyyaml>=6.0",          # reads YAML frontmatter in task files
+    "pydantic>=2.7",        # validates the arguments the AI passes to tools
+    "github-copilot-sdk>=1.0.16,<2",  # GitHub Copilot, used only by alfred.agent.copilot_backend
+    "PySide6>=6.10",        # the desktop UI (Qt), used only by alfred.ui
 ]
 
 [project.optional-dependencies]
@@ -21,6 +25,13 @@ dev = ["pytest>=8"]
 # Installing the project creates an `alfred` command that calls main().
 [project.scripts]
 alfred = "alfred.__main__:main"
+
+# The same entry point as a windowed app: no console window appears.
+[project.gui-scripts]
+alfred-desktop = "alfred.__main__:main"
+
+[tool.setuptools.package-data]
+alfred = ["ui/*.png"]
 
 [tool.setuptools.dynamic]
 version = { attr = "alfred.__version__" }

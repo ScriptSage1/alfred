@@ -171,6 +171,25 @@ class ObsidianClient:
             "POST", _vault_url(path), content=content, headers={"Content-Type": MARKDOWN}
         )
 
+    def delete_note(self, path: str) -> None:
+        """Delete a note. Obsidian moves it to its trash, so it can be restored."""
+        self._request("DELETE", _vault_url(path))
+
+    def list_notes(self, folder: str = "") -> list[str]:
+        """Vault-relative paths of the files directly inside ``folder``.
+
+        Subfolders are left out. A folder that does not exist gives [].
+        """
+        folder = folder.strip().strip("/")
+        url = "/vault/" + (quote(folder, safe="/") + "/" if folder else "")
+        try:
+            response = self._request("GET", url)
+        except NoteNotFoundError:
+            return []
+        prefix = f"{folder}/" if folder else ""
+        # The plugin lists names relative to the folder; subfolders end in "/".
+        return [prefix + name for name in response.json().get("files", []) if not name.endswith("/")]
+
     def search_notes(self, query: str, context_length: int = 100) -> list[SearchResult]:
         """Full-text search across the vault."""
         response = self._request(

@@ -4,9 +4,14 @@
 
 # Alfred
 
-A personal desktop AI assistant. This is a learning project; right now it is
-only the skeleton: configuration, logging, a module loader, and one example
-module (`hello`).
+A personal desktop AI assistant (learning project). Press a hotkey, type a
+request in plain language, and Alfred's agent (GitHub Copilot) carries it out
+with Alfred's own tools — for now, managing tasks stored in your Obsidian vault.
+
+```
+Alt+M → command palette → Agent → Copilot → tool (e.g. create_task)
+      → TodoService → ObsidianClient → Obsidian → reply in the palette
+```
 
 ## Setup
 
@@ -16,19 +21,47 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
+Then connect Obsidian and Copilot (sections below).
+
 ## Run
 
 ```bash
-alfred
-alfred --log-level DEBUG
-python -m alfred --config alfred.toml
+alfred                       # desktop app: tray icon + hotkey palette (logs to %LOCALAPPDATA%\Alfred\alfred.log)
+alfred-desktop               # same, without a console window
+alfred ask "Add a task to finish my assignment tomorrow"   # one request from the terminal
+alfred --log-level DEBUG ask "What tasks are due this week?"
 ```
+
+The hotkey is set in `alfred.toml` (`[ui] hotkey`). Alfred's default is
+Ctrl+Alt+Space; this machine uses `alt+m` because Ctrl+Alt+Space is taken by
+another application. Press Esc to close the palette; quit from the tray icon.
 
 ## Test
 
 ```bash
 pytest
 ```
+
+## Connecting to GitHub Copilot
+
+Alfred uses the official [GitHub Copilot SDK for Python](https://github.com/github/copilot-sdk)
+(`github-copilot-sdk`). It downloads its runtime automatically the first time
+it starts. You need a Copilot subscription and a token:
+
+1. On GitHub: Settings → Developer settings → Fine-grained tokens → Generate new token.
+   Resource owner: **your personal account**. Under *Account permissions*, set
+   **Copilot Requests** to *Read-only*. (Classic `ghp_` tokens are not accepted.)
+2. Store it as an environment variable (never in `alfred.toml`), in Git Bash:
+   ```bash
+   read -rsp "GitHub token: " COPILOT_GITHUB_TOKEN && export COPILOT_GITHUB_TOKEN && setx COPILOT_GITHUB_TOKEN "$COPILOT_GITHUB_TOKEN"
+   ```
+3. Check it:
+   ```bash
+   python scripts/check_copilot.py
+   ```
+
+Copilot only sees Alfred's registered tools: its built-in shell, file and web
+tools are switched off, so it can act only through validated Python code.
 
 ## Connecting to Obsidian
 
@@ -53,3 +86,56 @@ Alfred talks to Obsidian through the
 
 Settings live in the `[obsidian]` section of `alfred.toml`; `OBSIDIAN_URL` and
 `OBSIDIAN_CA_CERT` environment variables override them.
+
+## Tasks
+
+Alfred stores each task as one Markdown file in the vault's `To-do/` folder,
+named after the task's id (e.g. `To-do/finish-sih-documentation.md`). Python
+(`alfred/todo/markdown.py`) controls the format; every file has the same keys
+in the same order (the `#` comments are only here to explain the values):
+
+```markdown
+---
+id: "finish-sih-documentation"
+title: "Finish SIH documentation"
+status: "open"            # open | in-progress | done | cancelled
+priority: "high"          # low | medium | high
+deadline: 2026-10-09
+tags:
+  - "sih"
+reminder: "daily"         # none | once | daily | weekly
+reminder_time: "09:00"
+reminder_date: null       # for "once"
+reminder_days: []         # for "weekly", e.g. ["mon", "thu"]
+related:
+  - "[[sih-slides]]"
+created: 2026-10-05T09:30:00
+updated: 2026-10-05T09:30:00
+completed: null
+---
+
+# Finish SIH documentation
+
+Free-form details.
+```
+
+You can edit task files in Obsidian; Alfred re-writes them in this format the
+next time it saves them. To check task handling against your vault:
+
+```bash
+python scripts/check_todos.py --keep
+```
+
+## How the code is organised
+
+| Package | Role |
+|---|---|
+| `alfred/ui/` | PySide6 command palette, tray icon, Windows hotkey. Knows nothing about tasks. |
+| `alfred/agent/agent.py` | Generic `Agent.run(message)`: sends the message plus the registered tools to a backend. |
+| `alfred/agent/copilot_backend.py` | The only file that imports the Copilot SDK. |
+| `alfred/tools/` | The Tool Registry: validates tool arguments (Pydantic) and runs the Python function. |
+| `alfred/todo/` | Todo model, Markdown format, `TodoService`, and the task tools. |
+| `alfred/obsidian.py` | The only file that makes HTTP requests. |
+| `alfred/assistant.py` | Wires everything together (the composition root). |
+
+`tests/test_architecture.py` enforces these boundaries.
