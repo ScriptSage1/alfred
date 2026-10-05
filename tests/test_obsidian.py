@@ -19,6 +19,8 @@ from alfred.obsidian import (
     ObsidianClient,
     ObsidianConnectionError,
     ObsidianError,
+    ObsidianLauncher,
+    ObsidianNotRunningError,
     SearchMatch,
     SearchResult,
 )
@@ -251,7 +253,7 @@ def test_obsidian_not_running_raises_connection_error():
     def refuse(request):
         raise httpx.ConnectError("connection refused", request=request)
 
-    with pytest.raises(ObsidianConnectionError, match="Is Obsidian open"):
+    with pytest.raises(ObsidianConnectionError, match="Obsidian isn't open"):
         make_client(refuse).read_note("Note.md")
 
 
@@ -300,3 +302,97 @@ def test_from_settings_with_plain_http_ignores_ca_cert(tmp_path):
     )
     with ObsidianClient.from_settings(settings) as client:
         assert client.base_url == "http://127.0.0.1:27123"
+
+
+# --- Starting Obsidian automatically ---------------------------------------------
+
+
+class ClosedObsidian:
+    """Refuses connections until it is launched; then it takes a few polls to start."""
+
+    def __init__(self, polls_to_start: int = 2) -> None:
+        self.opened_uris: list[str] = []
+        self.polls_to_start = polls_to_start
+        self.running = False
+
+    def open_uri(self, uri: str) -> None:
+        self.opened_uris.append(uri)
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if not self.running and self.opened_uris:
+            self.polls_to_start -= 1
+            self.running = self.polls_to_start < 0
+        if not self.running:
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(200, text="# Shopping")
+
+
+class FakeTime:
+    """sleep() moves the clock forward instantly, so tests never really wait."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+    def clock(self) -> float:
+        return self.now
+
+
+def client_with_launcher(obsidian: ClosedObsidian, timeout: float = 30) -> ObsidianClient:
+    fake_time = FakeTime()
+    launcher = ObsidianLauncher(
+        "alfred", timeout=timeout, open_uri=obsidian.open_uri, sleep=fake_time.sleep, clock=fake_time.clock
+    )
+    return ObsidianClient(BASE_URL, API_KEY, transport=httpx.MockTransport(obsidian), launcher=launcher)
+
+
+def test_obsidian_is_started_and_the_request_retried():
+    obsidian = ClosedObsidian()
+    assert client_with_launcher(obsidian).read_note("Lists/Shopping.md") == "# Shopping"
+    assert obsidian.opened_uris == ["obsidian://open?vault=alfred"]
+
+
+def test_gives_up_if_the_plugin_never_answers():
+    obsidian = ClosedObsidian(polls_to_start=10_000)
+    with pytest.raises(ObsidianNotRunningError, match="did not answer within 5 seconds"):
+        client_with_launcher(obsidian, timeout=5).read_note("x.md")
+    assert len(obsidian.opened_uris) == 1  # tried once, did not keep relaunching
+
+
+def test_without_a_launcher_nothing_is_started():
+    obsidian = ClosedObsidian()
+    client = ObsidianClient(BASE_URL, API_KEY, transport=httpx.MockTransport(obsidian))
+    with pytest.raises(ObsidianNotRunningError, match="Obsidian isn't open"):
+        client.read_note("x.md")
+    assert obsidian.opened_uris == []
+
+
+def test_certificate_problems_do_not_start_obsidian():
+    opened = []
+
+    def bad_certificate(request):
+        raise httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed", request=request)
+
+    launcher = ObsidianLauncher("alfred", open_uri=opened.append)
+    client = ObsidianClient(BASE_URL, API_KEY, transport=httpx.MockTransport(bad_certificate), launcher=launcher)
+    with pytest.raises(ObsidianConnectionError, match="certificate") as excinfo:
+        client.read_note("x.md")
+    assert not isinstance(excinfo.value, ObsidianNotRunningError)
+    assert opened == []
+
+
+@pytest.mark.parametrize(
+    "vault, uri",
+    [("alfred", "obsidian://open?vault=alfred"), ("My Vault", "obsidian://open?vault=My%20Vault"), (None, "obsidian://open")],
+)
+def test_launch_uri(vault, uri):
+    assert ObsidianLauncher(vault).uri == uri
+
+
+def test_from_settings_respects_auto_launch():
+    on = ObsidianClient.from_settings(ObsidianSettings(url="http://x:1", api_key=API_KEY, vault="alfred"))
+    off = ObsidianClient.from_settings(ObsidianSettings(url="http://x:1", api_key=API_KEY, auto_launch=False))
+    assert on._launcher is not None and on._launcher.vault == "alfred"
+    assert off._launcher is None

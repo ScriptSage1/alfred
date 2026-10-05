@@ -2,6 +2,7 @@
 
     alfred                 start the desktop app (tray icon + Ctrl+Alt+Space palette)
     alfred ask "..."       send one request to the agent and print the reply
+    alfred autostart on    start Alfred automatically when you log in (off / status)
     alfred-desktop         same as `alfred`, but without a console window
 
 Runs when you type `alfred` (installed by pyproject.toml) or `python -m alfred`.
@@ -18,7 +19,7 @@ from pathlib import Path
 
 from alfred import __version__
 from alfred.app import Alfred, ModuleLoadError
-from alfred.config import VALID_LOG_LEVELS, AlfredConfig, ConfigError, load_config
+from alfred.config import VALID_LOG_LEVELS, AlfredConfig, ConfigError, load_config, resolve_config_path
 from alfred.logging_setup import configure_logging, default_log_file
 
 
@@ -42,6 +43,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     commands.add_parser("start", help="run the desktop app (the default)")
     ask = commands.add_parser("ask", help="send one request to Alfred and print the reply")
     ask.add_argument("message", nargs="+", help="what you want, in plain language")
+    autostart = commands.add_parser("autostart", help="start Alfred when you log in to Windows")
+    autostart.add_argument("action", choices=["on", "off", "status"])
 
     args = parser.parse_args(argv)
     args.command = args.command or "start"
@@ -61,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.log_level:
         config = dataclasses.replace(config, log_level=args.log_level)
+
+    if args.command == "autostart":
+        return run_autostart(args.action, resolve_config_path(args.config))
 
     if args.command == "ask":
         # Keep the terminal readable: only warnings unless --log-level was given.
@@ -82,6 +88,26 @@ def run_start(config: AlfredConfig) -> int:
     from alfred.ui.app import run_desktop
 
     return run_desktop(lambda: open_agent(config), hotkey=config.ui.hotkey)
+
+
+def run_autostart(action: str, config_path: Path | None) -> int:
+    from alfred import autostart
+
+    try:
+        if action == "on":
+            command = autostart.desktop_command(config_path)
+            autostart.enable(command)
+            print(f"Alfred will start when you log in.\n  {command}")
+        elif action == "off":
+            removed = autostart.disable()
+            print("Alfred will no longer start at login." if removed else "Autostart was not on.")
+        else:
+            command = autostart.current()
+            print(f"Autostart is on:\n  {command}" if command else "Autostart is off.")
+    except autostart.AutostartError as exc:
+        print(f"alfred: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def run_ask(config: AlfredConfig, message: str) -> int:

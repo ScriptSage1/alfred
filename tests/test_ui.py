@@ -205,3 +205,53 @@ def test_global_hotkey_registers_and_delivers_presses():
     finally:
         hotkey.stop()
     assert not hotkey._thread.is_alive()
+
+
+# --- Lazy start and single instance --------------------------------------------------
+
+
+def test_agent_starts_when_the_palette_opens_not_before(palette):
+    opened = []
+
+    @asynccontextmanager
+    async def open_agent():
+        opened.append(True)
+        yield Agent(ScriptedBackend(), ToolRegistry())
+
+    worker = AgentWorker(open_agent)
+    controller = PaletteController(palette, worker)  # noqa: F841
+    worker.start()
+    try:
+        time.sleep(0.2)
+        QApplication.processEvents()
+        assert opened == []  # nothing heavy at startup
+
+        palette.show_palette()
+        wait_until(lambda: opened == [True])
+
+        palette.show_palette()  # opening again does not start a second agent
+        time.sleep(0.2)
+        assert opened == [True]
+    finally:
+        worker.stop()
+
+
+def test_second_copy_asks_the_first_to_open_the_palette(qapp):
+    import uuid
+
+    from alfred.ui.app import SingleInstance
+
+    name = f"alfred-test-{uuid.uuid4().hex}"
+    assert SingleInstance(name).notify_running_instance() is False  # nobody running yet
+
+    first = SingleInstance(name)
+    activations = []
+    first.activated.connect(lambda: activations.append(True))
+    first.listen()
+
+    assert SingleInstance(name).notify_running_instance() is True
+    wait_until(lambda: activations == [True])
+
+
+def test_long_progress_lines_wrap_instead_of_being_cut_off(palette):
+    assert palette._steps_label.wordWrap()

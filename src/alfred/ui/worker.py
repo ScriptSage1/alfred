@@ -40,9 +40,17 @@ class AgentWorker(QObject):
         self._lock: asyncio.Lock | None = None
 
     def start(self) -> None:
-        """Start the thread and warm up the agent (Copilot takes a few seconds)."""
+        """Start the background thread. The agent itself starts later, in warm_up()."""
         self._thread.start()
-        asyncio.run_coroutine_threadsafe(self._warm_up(), self._loop)
+
+    def warm_up(self) -> None:
+        """Get the agent ready in the background (Copilot takes a few seconds).
+
+        Called when the palette opens, so Copilot starts while you type rather
+        than at login. Does nothing if the agent is already running.
+        """
+        if self._agent is None:
+            asyncio.run_coroutine_threadsafe(self._warm_up(), self._loop)
 
     def run(self, text: str) -> None:
         """Ask the agent; the answer arrives later through `finished` or `failed`."""

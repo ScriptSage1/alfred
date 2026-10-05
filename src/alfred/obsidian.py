@@ -10,7 +10,13 @@ API reference: https://coddingtonbear.github.io/obsidian-local-rest-api/
 from __future__ import annotations
 
 import logging
+import os
 import ssl
+import sys
+import threading
+import time
+import webbrowser
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -35,6 +41,10 @@ class ObsidianConnectionError(ObsidianError):
     """Obsidian could not be reached at all (not running, wrong URL, TLS problem)."""
 
 
+class ObsidianNotRunningError(ObsidianConnectionError):
+    """Nothing is listening at the URL: Obsidian (or its REST plugin) is not running."""
+
+
 class ObsidianAuthError(ObsidianError):
     """Obsidian rejected the API key (HTTP 401 or 403)."""
 
@@ -54,6 +64,58 @@ class ObsidianAPIError(ObsidianError):
         super().__init__(f"Obsidian returned HTTP {status_code}: {message}")
         self.status_code = status_code
         self.error_code = error_code
+
+
+# --- Starting Obsidian ------------------------------------------------------
+
+
+class ObsidianLauncher:
+    """Starts the Obsidian app and waits until its Local REST API answers.
+
+    It opens an obsidian://open?vault=... link, which Windows hands to Obsidian
+    (the installer registers that link type), the same as clicking such a link.
+    """
+
+    def __init__(
+        self,
+        vault: str | None = None,
+        *,
+        timeout: float = 30.0,
+        open_uri: Callable[[str], Any] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.vault = vault
+        self.timeout = timeout
+        self._open_uri = open_uri or _open_uri
+        self._sleep = sleep
+        self._clock = clock
+
+    @property
+    def uri(self) -> str:
+        return "obsidian://open" + (f"?vault={quote(self.vault)}" if self.vault else "")
+
+    def start_and_wait(self, is_ready: Callable[[], bool]) -> None:
+        log.info("Obsidian is not running; starting it (%s)", self.uri)
+        self._open_uri(self.uri)
+        deadline = self._clock() + self.timeout
+        while self._clock() < deadline:
+            self._sleep(0.5)
+            if is_ready():
+                log.info("Obsidian is ready")
+                return
+        vault = f"the '{self.vault}' vault" if self.vault else "your vault"
+        raise ObsidianNotRunningError(
+            f"started Obsidian, but its Local REST API did not answer within {self.timeout:.0f} "
+            f"seconds. Check that the Local REST API plugin is enabled in {vault}."
+        )
+
+
+def _open_uri(uri: str) -> None:
+    if sys.platform == "win32":
+        os.startfile(uri)  # like double-clicking the link
+    else:
+        webbrowser.open(uri)
 
 
 # --- Search results ---------------------------------------------------------
@@ -104,10 +166,13 @@ class ObsidianClient:
         verify: ssl.SSLContext | bool = True,
         timeout: float = 10.0,
         transport: httpx.BaseTransport | None = None,
+        launcher: ObsidianLauncher | None = None,
     ) -> None:
         if not api_key:
             raise ObsidianError("an Obsidian API key is required")
         self.base_url = base_url
+        self._launcher = launcher  # None: never start Obsidian, just report the error
+        self._launch_lock = threading.Lock()
         self._http = httpx.Client(
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -128,7 +193,12 @@ class ObsidianClient:
             if not settings.ca_cert.exists():
                 raise ObsidianError(f"Obsidian CA certificate not found: {settings.ca_cert}")
             verify = ssl.create_default_context(cafile=str(settings.ca_cert))
-        return cls(settings.url, settings.api_key, verify=verify, timeout=settings.timeout)
+        launcher = None
+        if settings.auto_launch:
+            launcher = ObsidianLauncher(settings.vault, timeout=settings.launch_timeout)
+        return cls(
+            settings.url, settings.api_key, verify=verify, timeout=settings.timeout, launcher=launcher
+        )
 
     def __repr__(self) -> str:
         return f"ObsidianClient(base_url={self.base_url!r})"  # never show the key
@@ -212,17 +282,18 @@ class ObsidianClient:
         self._request("PUT", _vault_url(path), content=content, headers={"Content-Type": MARKDOWN})
 
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        """Send one HTTP request and turn failures into ObsidianError subclasses."""
-        log.debug("%s %s", method, url)
+        """Send one HTTP request and turn failures into ObsidianError subclasses.
+
+        If Obsidian is not running and a launcher is set, start Obsidian, wait
+        for it, and send the request once more.
+        """
         try:
-            response = self._http.request(method, url, **kwargs)
-        except httpx.ConnectError as exc:
-            hint = "Is Obsidian open with the Local REST API plugin enabled?"
-            if "CERTIFICATE_VERIFY_FAILED" in str(exc):
-                hint = "HTTPS certificate not trusted; set ca_cert / OBSIDIAN_CA_CERT."
-            raise ObsidianConnectionError(f"cannot connect to {self.base_url}. {hint}") from exc
-        except httpx.TimeoutException as exc:
-            raise ObsidianConnectionError(f"Obsidian at {self.base_url} timed out") from exc
+            response = self._send(method, url, **kwargs)
+        except ObsidianNotRunningError:
+            if self._launcher is None:
+                raise
+            self._start_obsidian()
+            response = self._send(method, url, **kwargs)
 
         if response.is_success:
             return response
@@ -232,6 +303,37 @@ class ObsidianClient:
             raise NoteNotFoundError(f"not found: {url}")
         error_code, message = _parse_error(response)
         raise ObsidianAPIError(response.status_code, message, error_code)
+
+    def _send(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        log.debug("%s %s", method, url)
+        try:
+            return self._http.request(method, url, **kwargs)
+        except httpx.ConnectError as exc:
+            if "CERTIFICATE_VERIFY_FAILED" in str(exc):
+                raise ObsidianConnectionError(
+                    f"cannot connect to {self.base_url}. HTTPS certificate not trusted; "
+                    "set ca_cert / OBSIDIAN_CA_CERT."
+                ) from exc
+            raise ObsidianNotRunningError(
+                f"cannot connect to {self.base_url}. Obsidian isn't open, or its Local REST API "
+                "plugin is not enabled."
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise ObsidianConnectionError(f"Obsidian at {self.base_url} timed out") from exc
+
+    def _start_obsidian(self) -> None:
+        # Tool calls can arrive from worker threads; only one of them starts Obsidian.
+        with self._launch_lock:
+            if not self._is_up():  # another thread may have started it meanwhile
+                self._launcher.start_and_wait(self._is_up)
+
+    def _is_up(self) -> bool:
+        """True if anything answers at the base URL (GET / needs no API key)."""
+        try:
+            self._http.get("/", timeout=2)
+        except httpx.TransportError:
+            return False
+        return True
 
 
 def _vault_url(path: str) -> str:

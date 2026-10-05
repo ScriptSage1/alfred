@@ -111,6 +111,7 @@ class ActivityBar(QWidget):
 
 class CommandPalette(QWidget):
     submitted = Signal(str)
+    shown = Signal()  # emitted each time the palette opens
 
     def __init__(self, icon: QIcon | None = None) -> None:
         super().__init__(
@@ -155,7 +156,7 @@ class CommandPalette(QWidget):
 
         self._separator = QFrame(objectName="separator")
         self._separator.setFixedHeight(1)
-        self._steps_label = QLabel(objectName="steps", textFormat=Qt.TextFormat.RichText)
+        self._steps_label = QLabel(objectName="steps", textFormat=Qt.TextFormat.RichText, wordWrap=True)
         self._reply_label = QLabel(objectName="reply", wordWrap=True)
         self._reply_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._hint = QLabel("Enter to send  ·  Esc to close", objectName="hint")
@@ -198,6 +199,11 @@ class CommandPalette(QWidget):
             self.move(target - QPoint(0, 14))
             self.show()
         self._animate(opacity=1.0, position=target, duration=190, curve=QEasingCurve.Type.OutCubic)
+        self._take_focus()
+        self.shown.emit()
+
+    def _take_focus(self) -> None:
+        """Make the palette the active window, with the cursor in the text box."""
         self.raise_()
         self.activateWindow()
         if QGuiApplication.platformName() == "windows":
@@ -265,18 +271,21 @@ class CommandPalette(QWidget):
         self._render()
 
     def show_reply(self, text: str) -> None:
-        self._steps = [s for s in self._steps if s.tool is not None]
-        self._reply_label.setStyleSheet("")
-        self._reply_label.setText(text)
-        self._set_busy(False)
-        self._render()
+        self._finish(text, color="")
 
     def show_error(self, text: str) -> None:
+        self._finish(text, color="color: #f87171;")
+
+    def _finish(self, text: str, *, color: str) -> None:
         self._steps = [s for s in self._steps if s.tool is not None]
-        self._reply_label.setStyleSheet("color: #f87171;")
+        self._reply_label.setStyleSheet(color)
         self._reply_label.setText(text)
         self._set_busy(False)
         self._render()
+        if self.isVisible():
+            # Another app (e.g. Obsidian, just started by a tool) may have taken
+            # focus meanwhile; take it back so Esc and typing reach the palette.
+            self._take_focus()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy

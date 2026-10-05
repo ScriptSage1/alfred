@@ -25,6 +25,12 @@ ca_cert = "obsidian-local-rest-api.crt"
 # Seconds to wait for Obsidian before giving up.
 timeout = 10
 
+# If Obsidian isn't running when Alfred needs it, start it and open this vault.
+auto_launch = true
+vault = "alfred"
+# Seconds to wait for Obsidian (and its Local REST API plugin) to start.
+launch_timeout = 30
+
 # The API key is NOT set here. Put it in the OBSIDIAN_API_KEY environment variable.
 
 [copilot]

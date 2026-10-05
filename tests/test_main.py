@@ -57,6 +57,31 @@ def test_main_unknown_module_returns_1(tmp_path, capsys, no_real_desktop):
     assert no_real_desktop == []  # the desktop never started
 
 
+def test_autostart_on_registers_the_desktop_command_with_the_config(tmp_path, monkeypatch, capsys):
+    import alfred.autostart
+
+    saved = {}
+    monkeypatch.setattr(alfred.autostart, "enable", lambda command: saved.update(command=command))
+    config = tmp_path / "alfred.toml"
+    config.write_text("", encoding="utf-8")
+
+    assert main(["--config", str(config), "autostart", "on"]) == 0
+    assert f'--config {config.resolve()}' in saved["command"] or f'--config "{config.resolve()}"' in saved["command"]
+    assert "will start when you log in" in capsys.readouterr().out
+
+
+def test_autostart_status_and_off(monkeypatch, capsys):
+    import alfred.autostart
+
+    monkeypatch.setattr(alfred.autostart, "current", lambda: None)
+    monkeypatch.setattr(alfred.autostart, "disable", lambda: True)
+    assert main(["autostart", "status"]) == 0
+    assert main(["autostart", "off"]) == 0
+    out = capsys.readouterr().out
+    assert "Autostart is off." in out
+    assert "will no longer start at login" in out
+
+
 def test_ask_prints_progress_and_reply(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
 

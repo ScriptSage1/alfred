@@ -36,6 +36,19 @@ The hotkey is set in `alfred.toml` (`[ui] hotkey`). Alfred's default is
 Ctrl+Alt+Space; this machine uses `alt+m` because Ctrl+Alt+Space is taken by
 another application. Press Esc to close the palette; quit from the tray icon.
 
+### Start automatically at login
+
+```bash
+alfred autostart on       # run from the project folder, so it records this alfred.toml
+alfred autostart status
+alfred autostart off
+```
+
+This adds Alfred to your Windows startup apps (per user, no admin rights; you
+can also switch it off in Task Manager → Startup apps). Alfred then waits in
+the tray using little memory, and Copilot only starts the first time you open
+the palette. Starting Alfred while it is already running just opens the palette.
+
 ## Test
 
 ```bash
@@ -46,16 +59,23 @@ pytest
 
 Alfred uses the official [GitHub Copilot SDK for Python](https://github.com/github/copilot-sdk)
 (`github-copilot-sdk`). It downloads its runtime automatically the first time
-it starts. You need a Copilot subscription and a token:
+it starts. You need a Copilot subscription and one way of signing in:
 
-1. On GitHub: Settings → Developer settings → Fine-grained tokens → Generate new token.
-   Resource owner: **your personal account**. Under *Account permissions*, set
-   **Copilot Requests** to *Read-only*. (Classic `ghp_` tokens are not accepted.)
-2. Store it as an environment variable (never in `alfred.toml`), in Git Bash:
-   ```bash
-   read -rsp "GitHub token: " COPILOT_GITHUB_TOKEN && export COPILOT_GITHUB_TOKEN && setx COPILOT_GITHUB_TOKEN "$COPILOT_GITHUB_TOKEN"
-   ```
-3. Check it:
+- **Browser login (no token to manage):** `npm install -g @github/copilot`,
+  then `copilot login`. The login is saved in Windows Credential Manager and
+  Alfred's Copilot runtime finds it automatically.
+- **Fine-grained token:**
+  1. On GitHub: Settings → Developer settings → Personal access tokens →
+     Fine-grained tokens → Generate new token. Resource owner: **your personal
+     account**; Repository access: *Public repositories*; under Permissions →
+     Account, add **Copilot Requests**. (Classic `ghp_` tokens are not accepted.)
+  2. Store it as an environment variable (never in `alfred.toml`). In PowerShell:
+     ```powershell
+     $t = Read-Host "GitHub token" -AsSecureString; [Environment]::SetEnvironmentVariable("COPILOT_GITHUB_TOKEN", [System.Net.NetworkCredential]::new("", $t).Password, "User")
+     ```
+     Programs started afterwards see it; restart Alfred if it is running.
+
+Check it:
    ```bash
    python scripts/check_copilot.py
    ```

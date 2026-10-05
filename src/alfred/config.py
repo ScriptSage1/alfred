@@ -38,6 +38,10 @@ class ObsidianSettings:
     # The plugin's certificate authority (PEM file), needed to verify HTTPS.
     ca_cert: Path | None = None
     timeout: float = 10.0
+    # Start Obsidian (opening this vault) when Alfred needs it and it isn't running.
+    auto_launch: bool = True
+    vault: str | None = None
+    launch_timeout: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -66,25 +70,37 @@ class AlfredConfig:
     ui: UISettings = field(default_factory=UISettings)
 
 
+def resolve_config_path(path: Path | None = None) -> Path | None:
+    """The config file Alfred will use: ``path`` if given, else ./alfred.toml if it exists."""
+    if path is not None:
+        return path.resolve()
+    if DEFAULT_CONFIG_PATH.exists():
+        return DEFAULT_CONFIG_PATH.resolve()
+    return None
+
+
 def load_config(path: Path | None = None, env: Mapping[str, str] | None = None) -> AlfredConfig:
     """Build an AlfredConfig from a TOML file and environment variables.
 
     If ``path`` is None, use ./alfred.toml when it exists, otherwise the
     built-in defaults. If ``path`` is given explicitly, it must exist.
     ``env`` defaults to the real environment; tests pass a plain dict instead.
+
+    Relative paths inside the file (like ca_cert) are relative to the file's
+    folder, so Alfred finds them no matter which folder it was started from.
     """
     if env is None:
         env = os.environ
 
     data: dict = {}
-    if path is None and DEFAULT_CONFIG_PATH.exists():
-        path = DEFAULT_CONFIG_PATH
+    path = resolve_config_path(path)
     if path is not None:
         data = _read_toml(path)
+    base_dir = path.parent if path is not None else Path.cwd()
 
     return AlfredConfig(
         **_alfred_section(data.get("alfred", {})),
-        obsidian=_obsidian_section(data.get("obsidian", {}), env),
+        obsidian=_obsidian_section(data.get("obsidian", {}), env, base_dir),
         copilot=_copilot_section(data.get("copilot", {})),
         ui=_ui_section(data.get("ui", {})),
     )
@@ -121,7 +137,7 @@ def _alfred_section(section: dict) -> dict:
     return {"name": name, "log_level": log_level, "modules": tuple(modules)}
 
 
-def _obsidian_section(section: dict, env: Mapping[str, str]) -> ObsidianSettings:
+def _obsidian_section(section: dict, env: Mapping[str, str], base_dir: Path) -> ObsidianSettings:
     """Validate the [obsidian] section, then apply environment variable overrides."""
     defaults = ObsidianSettings()
 
@@ -135,19 +151,37 @@ def _obsidian_section(section: dict, env: Mapping[str, str]) -> ObsidianSettings
     if not isinstance(url, str) or not url.startswith(("http://", "https://")):
         raise ConfigError("obsidian 'url' must start with http:// or https://")
 
-    ca_cert = env.get("OBSIDIAN_CA_CERT") or section.get("ca_cert")
+    ca_cert = section.get("ca_cert")
     if ca_cert is not None and not isinstance(ca_cert, str):
         raise ConfigError("obsidian 'ca_cert' must be a file path")
+    if ca_cert:
+        ca_cert = base_dir / ca_cert  # an absolute ca_cert stays absolute
+    ca_cert = env.get("OBSIDIAN_CA_CERT") or ca_cert
 
     timeout = section.get("timeout", defaults.timeout)
     if not isinstance(timeout, (int, float)) or timeout <= 0:
         raise ConfigError("obsidian 'timeout' must be a positive number of seconds")
+
+    auto_launch = section.get("auto_launch", defaults.auto_launch)
+    if not isinstance(auto_launch, bool):
+        raise ConfigError("obsidian 'auto_launch' must be true or false")
+
+    vault = section.get("vault") or None
+    if vault is not None and not isinstance(vault, str):
+        raise ConfigError("obsidian 'vault' must be the vault's name")
+
+    launch_timeout = section.get("launch_timeout", defaults.launch_timeout)
+    if not isinstance(launch_timeout, (int, float)) or launch_timeout <= 0:
+        raise ConfigError("obsidian 'launch_timeout' must be a positive number of seconds")
 
     return ObsidianSettings(
         url=url.rstrip("/"),
         api_key=env.get("OBSIDIAN_API_KEY") or None,
         ca_cert=Path(ca_cert) if ca_cert else None,
         timeout=float(timeout),
+        auto_launch=auto_launch,
+        vault=vault,
+        launch_timeout=float(launch_timeout),
     )
 
 

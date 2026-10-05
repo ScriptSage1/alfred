@@ -69,7 +69,7 @@ def test_obsidian_settings_from_file(tmp_path):
     )
     obsidian = load_config(path, env=NO_ENV).obsidian
     assert obsidian.url == "http://localhost:27123"  # trailing slash removed
-    assert obsidian.ca_cert == Path("ca.crt")
+    assert obsidian.ca_cert == tmp_path / "ca.crt"  # relative to the config file's folder
     assert obsidian.timeout == 3.0
     assert obsidian.api_key is None
 
@@ -85,6 +85,20 @@ def test_environment_overrides_file(tmp_path):
     assert obsidian.url == "http://127.0.0.1:27123"
     assert obsidian.api_key == "secret-key"
     assert obsidian.ca_cert == Path("other.crt")
+
+
+def test_relative_paths_do_not_depend_on_the_current_folder(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    path = write(project / "alfred.toml", '[obsidian]\nca_cert = "obsidian.crt"\n')
+    monkeypatch.chdir(tmp_path)  # e.g. Windows starting Alfred at login from another folder
+    assert load_config(path, env=NO_ENV).obsidian.ca_cert == project / "obsidian.crt"
+
+
+def test_absolute_ca_cert_stays_absolute(tmp_path):
+    cert = tmp_path / "elsewhere" / "ca.crt"
+    path = write(tmp_path / "alfred.toml", f"[obsidian]\nca_cert = '{cert}'\n")
+    assert load_config(path, env=NO_ENV).obsidian.ca_cert == cert
 
 
 def test_api_key_in_config_file_is_rejected(tmp_path):
@@ -137,3 +151,20 @@ def test_bad_copilot_timeout(tmp_path):
     path = write(tmp_path / "alfred.toml", "[copilot]\ntimeout = 0\n")
     with pytest.raises(ConfigError, match="timeout"):
         load_config(path, env=NO_ENV)
+
+
+def test_obsidian_launch_settings(tmp_path):
+    defaults = load_config(write(tmp_path / "alfred.toml", ""), env=NO_ENV).obsidian
+    assert defaults.auto_launch is True
+    assert defaults.vault is None
+    assert defaults.launch_timeout == 30.0
+
+    path = write(tmp_path / "custom.toml", '[obsidian]\nauto_launch = false\nvault = "alfred"\nlaunch_timeout = 15\n')
+    custom = load_config(path, env=NO_ENV).obsidian
+    assert (custom.auto_launch, custom.vault, custom.launch_timeout) == (False, "alfred", 15.0)
+
+
+@pytest.mark.parametrize("line", ['auto_launch = "yes"', "vault = 3", "launch_timeout = -1"])
+def test_bad_obsidian_launch_settings(tmp_path, line):
+    with pytest.raises(ConfigError):
+        load_config(write(tmp_path / "alfred.toml", f"[obsidian]\n{line}\n"), env=NO_ENV)
